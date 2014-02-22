@@ -10,6 +10,9 @@ import java.security.ProtectionDomain;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import org.drools.compiler.kie.builder.impl.InternalKieModule;
 import org.kie.api.builder.KieModule;
@@ -46,18 +49,24 @@ public class MavenClassLoaderResolver implements ClassLoaderResolver {
         }
 
         InternalKieModule internalKModule = (InternalKieModule)kmodule;
-        Collection<ReleaseId> jarDependencies = internalKModule.getJarDependencies();
-
-        if (jarDependencies.isEmpty()) {
-            return parent;
-        }
+        
 
         ArtifactResolver resolver = ArtifactResolver.getResolverFor(kmodule.getReleaseId(),true);
         List<URL> urls = new ArrayList<URL>();
         List<ReleaseId> unresolvedDeps = new ArrayList<ReleaseId>();
-
-        for (ReleaseId rid : jarDependencies) {
-            try {
+        
+        Queue<InternalKieModule> queue = new LinkedBlockingQueue<InternalKieModule>();
+        queue.add(internalKModule);
+        while (!queue.isEmpty()) {
+        try {
+        	InternalKieModule module = queue.poll();
+        	
+        	queue.addAll(module.getKieDependencies().values());
+        	
+	        urls.add(module.getFile().toURI().toURL());
+	        
+	        Collection<ReleaseId> jarDependencies = module.getJarDependencies();
+	        for (ReleaseId rid : jarDependencies) {
                 Artifact artifact = resolver.resolveArtifact(rid);
                 if( artifact != null ) {
                     File jar = artifact.getFile(); 
@@ -66,11 +75,12 @@ public class MavenClassLoaderResolver implements ClassLoaderResolver {
                     logger.error( "Dependency artifact not found for: " + rid );
                     unresolvedDeps.add(rid);
                 }
-            } catch (MalformedURLException e) {
-                throw new RuntimeException(e);
-            }
+	        }
+        } catch (MalformedURLException e) {
+            throw new RuntimeException(e);
         }
-
+        }
+        
         internalKModule.setUnresolvedDependencies(unresolvedDeps);
         return new URLClassLoader(urls.toArray(new URL[urls.size()]), parent);
     }
